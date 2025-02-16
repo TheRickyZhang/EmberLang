@@ -29,52 +29,146 @@ public final class Parser {
     }
 
     public Ast.Source parseSource() throws ParseException {
-        throw new UnsupportedOperationException("TODO"); //TODO
+        List<Ast.Stmt> statements = new ArrayList<>();
+        while (tokens.has(0)) {
+            statements.add(parseStmt());
+        }
+        return new Ast.Source(statements);
     }
 
-    public Ast.Stmt parseStmt() throws ParseException {
-        throw new UnsupportedOperationException("TODO"); //TODO
+    Ast.Stmt parseStmt() throws ParseException {
+        if (tokens.peek("LET")) {
+            return parseLetStmt();
+        } else if (tokens.peek("DEF")) {
+            return parseDefStmt();
+        } else if (tokens.peek("IF")) {
+            return parseIfStmt();
+        } else if (tokens.peek("FOR")) {
+            return parseForStmt();
+        } else if (tokens.peek("RETURN")) {
+            return parseReturnStmt();
+        } else {
+            // Fallback: parse an expression (or assignment) statement.
+            return parseExpressionOrAssignmentStmt();
+        }
     }
 
     private Ast.Stmt.Let parseLetStmt() throws ParseException {
-        throw new UnsupportedOperationException("TODO"); //TODO
+        if(!tokens.match("LET")) throw new ParseException("No LET");
+        String id = getIdentifier();
+        Optional<Ast.Expr> val = Optional.empty();
+        if(tokens.match("=")) {
+             val = Optional.of(parseExpr());
+        }
+        checkSemicolon();
+        return new Ast.Stmt.Let(id, val);
     }
 
     private Ast.Stmt.Def parseDefStmt() throws ParseException {
-        throw new UnsupportedOperationException("TODO"); //TODO
+        if (!tokens.match("DEF")) throw new ParseException("Expected 'DEF'");
+        String id = getIdentifier();
+
+        List<String> parameters = parseCommaSeparatedList(this::getIdentifier);
+
+        if (!tokens.match("DO")) throw new ParseException("Expected 'DO' before function body");
+        List<Ast.Stmt> body = new ArrayList<>();
+        while (!tokens.peek("END")) {
+            body.add(parseStmt());
+        }
+        if (!tokens.match("END")) throw new ParseException("Expected 'END' after function body");
+
+        return new Ast.Stmt.Def(id, parameters, body);
     }
 
+
     private Ast.Stmt.If parseIfStmt() throws ParseException {
-        throw new UnsupportedOperationException("TODO"); //TODO
+        checkMacro("IF");
+        Ast.Expr condition = parseExpr();
+        checkMacro("DO");
+        List<Ast.Stmt> thenBody = new ArrayList<>();
+        List<Ast.Stmt> elseBody = new ArrayList<>();
+
+        while(!tokens.peek("ELSE") && !tokens.peek("END")) thenBody.add(parseStmt());
+        if(tokens.match("ELSE")) {
+            while(!tokens.peek("END")) elseBody.add(parseStmt());
+        }
+        checkMacro("END");
+        return new Ast.Stmt.If(condition, thenBody, elseBody);
     }
 
     private Ast.Stmt.For parseForStmt() throws ParseException {
-        throw new UnsupportedOperationException("TODO"); //TODO
+        checkMacro("FOR");
+        String id = getIdentifier();
+        checkMacro("IN");
+        Ast.Expr expression = parseExpr();
+        checkMacro("DO");
+
+        List<Ast.Stmt> body = new ArrayList<>();
+        while (!tokens.peek("END")) body.add(parseStmt());
+        checkMacro("END");
+
+        return new Ast.Stmt.For(id, expression, body);
     }
 
     private Ast.Stmt.Return parseReturnStmt() throws ParseException {
-        throw new UnsupportedOperationException("TODO"); //TODO
+        checkMacro("RETURN");
+        Optional<Ast.Expr> value = Optional.empty();
+        if (!tokens.peek(";")) value = Optional.of(parseExpr());
+        checkSemicolon();
+        return new Ast.Stmt.Return(value);
     }
 
     private Ast.Stmt parseExpressionOrAssignmentStmt() throws ParseException {
-        throw new UnsupportedOperationException("TODO"); //TODO
+        Ast.Expr expr = parseExpr();
+        Ast.Expr val = null;
+        if (tokens.match("=")) {
+            val = parseExpr();
+        }
+        return (val == null) ? new Ast.Stmt.Expression(expr) : new Ast.Stmt.Assignment(expr, val);
     }
 
     public Ast.Expr parseExpr() throws ParseException {
-        throw new UnsupportedOperationException("TODO"); //TODO
+        return parseLogicalExpr();
     }
 
     private Ast.Expr parseLogicalExpr() throws ParseException {
         Ast.Expr expr = parseComparisonExpr();
-       ]
+        while(tokens.peek("AND") || tokens.peek("OR")) {
+            String operator = tokens.peek("AND") ? "AND" : "OR";
+            tokens.match(operator);
+            Ast.Expr right = parseComparisonExpr();
+            expr = new Ast.Expr.Binary(operator, expr, right);
+        }
+        return expr;
     }
 
     private Ast.Expr parseComparisonExpr() throws ParseException {
-        throw new UnsupportedOperationException("TODO"); //TODO
+        Ast.Expr expr = parseAdditiveExpr();
+        String[] operators = {"<=", ">=", "==", "!=", "<", ">"};
+        while (true) {
+            String op = null;
+            for (String candidate : operators) {
+                if (tokens.peek(candidate)) {
+                    op = candidate; tokens.match(candidate);
+                    break;
+                }
+            }
+            if (op == null) break;
+            Ast.Expr right = parseAdditiveExpr();
+            expr = new Ast.Expr.Binary(op, expr, right);
+        }
+        return expr;
     }
 
     private Ast.Expr parseAdditiveExpr() throws ParseException {
-        throw new UnsupportedOperationException("TODO"); //TODO
+        Ast.Expr expr = parseMultiplicativeExpr();
+        while (tokens.peek("+") || tokens.peek("-")) {
+            String operator = tokens.peek("+") ? "+" : "-";
+            tokens.match(operator);
+            Ast.Expr right = parseMultiplicativeExpr();
+            expr = new Ast.Expr.Binary(operator, expr, right);
+        }
+        return expr;
     }
 
     private Ast.Expr parseMultiplicativeExpr() throws ParseException {
@@ -91,18 +185,9 @@ public final class Parser {
     private Ast.Expr parseSecondaryExpr() throws ParseException {
         Ast.Expr primary = parsePrimaryExpr();
         if(!tokens.match(".")) return primary;
-        if(!tokens.peek(Token.Type.IDENTIFIER)) throw new ParseException("Missing identifier");
-        Token id = tokens.get(0);
-        tokens.match(Token.Type.IDENTIFIER);
-        if(!tokens.match("(")) throw new ParseException("Missing (");
-        List<Ast.Expr> arguments = new ArrayList<>();
-        if (!tokens.peek(")")) {
-            do {
-                arguments.add(parseExpr());
-            } while (tokens.match(","));
-        }
-        if(!tokens.match(")")) throw new ParseException("Missing )");
-        return new Ast.Expr.Method(primary, id.literal(), arguments);
+        String id = getIdentifier();
+        List<Ast.Expr> arguments = parseCommaSeparatedList(this::parseExpr);
+        return new Ast.Expr.Method(primary, id, arguments);
     }
 
     private Ast.Expr parsePrimaryExpr() throws ParseException {
@@ -129,14 +214,11 @@ public final class Parser {
     }
 
     private Ast.Expr.Literal parseLiteralExpr() throws ParseException {
-        if(tokens.peek(Token.Type.NIL)) {
-            tokens.match(Token.Type.NIL);
+        if(tokens.match(Token.Type.NIL)) {
             return new Ast.Expr.Literal(null); // We can use built-in null as nil
-        } else if (tokens.peek(Token.Type.TRUE)) {
-            tokens.match(Token.Type.TRUE);
+        } else if (tokens.match(Token.Type.TRUE)) {
             return new Ast.Expr.Literal(true);
-        } else if (tokens.peek(Token.Type.FALSE)) {
-            tokens.match(Token.Type.FALSE);
+        } else if (tokens.match(Token.Type.FALSE)) {
             return new Ast.Expr.Literal(false);
         } else if (tokens.peek(Token.Type.INTEGER)) {
             Token token = tokens.get(0);
@@ -167,37 +249,66 @@ public final class Parser {
     }
 
     private Ast.Expr.ObjectExpr parseObjectExpr() throws ParseException {
-        if(!tokens.match("OBJECT")) throw new ParseException("Expected object");
-        Optional<String> name = Optional.empty();
+        checkMacro("OBJECT");
+        Optional<String> id = Optional.empty();
         if (tokens.peek(Token.Type.IDENTIFIER)) {
-            name = Optional.of(tokens.get(0).literal());
+            String temp = tokens.get(0).literal();
             tokens.match(Token.Type.IDENTIFIER);
+            id = Optional.of(temp);
         }
-        if(!tokens.match("DO")) throw new ParseException("Expected do");
+        checkMacro("DO");
         List<Ast.Stmt.Let> fields = new ArrayList<>();
         List<Ast.Stmt.Def> methods = new ArrayList<>();
         while(tokens.peek("LET")) fields.add(parseLetStmt());
         while(tokens.peek("DEF")) methods.add(parseDefStmt());
-        if(!tokens.match("END")) throw new ParseException("Expected end");
-        return new Ast.Expr.ObjectExpr(name, fields, methods);
+        checkMacro("END");
+        return new Ast.Expr.ObjectExpr(id, fields, methods);
     }
 
     private Ast.Expr parseVariableOrFunctionExpr() throws ParseException {
-        if (!tokens.peek(Token.Type.IDENTIFIER)) throw new ParseException("Expected Identifier");
-        String variable = tokens.get(0).literal();
-        tokens.match(Token.Type.IDENTIFIER);
-        if (!tokens.peek("(")) return new Ast.Expr.Variable(variable);
+        String id = getIdentifier();
+        if (!tokens.peek("(")) return new Ast.Expr.Variable(id);
+        List<Ast.Expr> arguments = parseCommaSeparatedList(this::parseExpr);
+        return new Ast.Expr.Function(id, arguments);
+    }
 
-        List<Ast.Expr> arguments = new ArrayList<>();
-        tokens.match("(");
+    //----------------------HELPER FUNCTIONS-----------------------//
+    public interface ThrowingSupplier<T> {
+        T get() throws ParseException;
+    }
+
+    private void checkMacro(String s) throws ParseException {
+        if(!tokens.match(s)) throw new ParseException("No " + s);
+    }
+
+    private void checkSemicolon() throws ParseException {
+        if (!tokens.match(";")) throw new ParseException("No semicolon");
+    }
+
+    private String getIdentifier() throws ParseException {
+        if (!tokens.peek(Token.Type.IDENTIFIER)) throw new ParseException("Expected identifier");
+        String id = tokens.get(0).literal();
+        tokens.match(Token.Type.IDENTIFIER);
+        return id;
+    }
+
+    // Takes in open (T , T , ... T)* closed.
+    // Returns List<T> elements, or throw error from invalid open, closed, or propagated lambda
+    private <T> List<T> parseCommaSeparatedList(ThrowingSupplier<T> elementParser) throws ParseException {
+        if (!tokens.match("("))
+            throw new ParseException("Expected '" + "(" + "'");
+        List<T> elements = new ArrayList<>();
         if (!tokens.peek(")")) {
             do {
-                arguments.add(parseExpr());
+                elements.add(elementParser.get());
             } while (tokens.match(","));
         }
-        if (!tokens.match(")")) throw new ParseException("Expected ')' after arguments");
-        return new Ast.Expr.Function(variable, arguments);
+        if (!tokens.match(")"))
+            throw new ParseException("Expected '" + ")" + "'");
+        return elements;
     }
+
+    //--------------------END HELPER FUNCTIONS---------------------//
 
     private static final class TokenStream {
 
