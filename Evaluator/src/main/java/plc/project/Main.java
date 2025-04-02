@@ -44,6 +44,7 @@ public final class Main {
         var ast = new Parser(new Lexer(input).lex()).parseSource(); //edit for manual testing
         var value = EVALUATOR.visit(ast);
         System.out.println(value.print());
+//        System.out.println("Debug: " + value.toString());
     }
 
     private interface ReplBody {

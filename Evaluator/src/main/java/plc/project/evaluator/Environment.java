@@ -46,7 +46,7 @@ public final class Environment {
         if(arguments.size() != 2) {
             throw new EvaluateException("Incorrect param count");
         }
-        BigInteger l = Evaluator.requireType(arguments.getFirst(), BigInteger.class);
+        BigInteger l = Evaluator.requireType(arguments.get(0), BigInteger.class);
         BigInteger r = Evaluator.requireType(arguments.get(1), BigInteger.class);
 
         if(r.intValueExact() < l.intValueExact()) {

@@ -3,11 +3,17 @@ package plc.project.evaluator;
 import plc.project.parser.Ast;
 
 import java.math.BigDecimal;
+import java.math.MathContext;
 import java.math.RoundingMode;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+
+// Patch notes:
+// Be very careful with scope! If we are entering a new scope, create a copy and then restore later
+// Use finally to ALWAYS restore scope in case of error
+// Keep in mind that the lambdas are referring to but not acting on the scope!
 
 public final class Evaluator implements Ast.Visitor<RuntimeValue, EvaluateException> {
 
@@ -82,8 +88,16 @@ public final class Evaluator implements Ast.Visitor<RuntimeValue, EvaluateExcept
         Boolean b = requireType(visit(ast.condition()), Boolean.class);
         List<Ast.Stmt> statements = b.equals(Boolean.TRUE) ? ast.thenBody() : ast.elseBody();
         RuntimeValue res = new RuntimeValue.Primitive(null);
-        for(Ast.Stmt s : statements) {
-            res = visit(s);
+
+        Scope blockScope = new Scope(scope);
+        Scope previousScope = scope;
+        scope = blockScope;
+        try {
+            for(Ast.Stmt s : statements) {
+                res = visit(s);
+            }
+        } finally {
+            scope = previousScope;
         }
         return res;
     }
@@ -99,13 +113,15 @@ public final class Evaluator implements Ast.Visitor<RuntimeValue, EvaluateExcept
         for (RuntimeValue element : list) {
             Scope loopScope = new Scope(scope);
             loopScope.define(ast.name(), element);
-
             Scope previousScope = scope;
             scope = loopScope;
-            for (Ast.Stmt statement : ast.body()) {
-                visit(statement);
+            try {
+                for (Ast.Stmt statement : ast.body()) {
+                    visit(statement);
+                }
+            } finally {
+                scope = previousScope;
             }
-            scope = previousScope;
         }
         return new RuntimeValue.Primitive(null);
     }
@@ -125,12 +141,20 @@ public final class Evaluator implements Ast.Visitor<RuntimeValue, EvaluateExcept
 
     @Override
     public RuntimeValue visit(Ast.Stmt.Assignment ast) throws EvaluateException {
-        RuntimeValue value = visit(ast.value());
         if (ast.expression() instanceof Ast.Expr.Property(Ast.Expr receiver, String name)) {
             RuntimeValue.ObjectValue ob = requireType(visit(receiver), RuntimeValue.ObjectValue.class);
+            // EDIT: Throw an exception if property not defined
+            if(name == null || ob.scope().get(name, false).isEmpty()) {
+                throw new EvaluateException("name in assignment not defined");
+            }
+            RuntimeValue value = visit(ast.value());
             ob.scope().set(name, value);
             return value;
         } else if (ast.expression() instanceof Ast.Expr.Variable(String name)) {
+            if(name == null || scope.get(name, false).isEmpty()) {
+                throw new EvaluateException("name in assignment not defined");
+            }
+            RuntimeValue value = visit(ast.value());
             scope.set(name, value);
             return value;
         }
@@ -280,7 +304,7 @@ public final class Evaluator implements Ast.Visitor<RuntimeValue, EvaluateExcept
                 }
                 // Create a new scope for method execution, child of the object scope.
                 Scope methodScope = new Scope(objectScope);
-                methodScope.define("this", objectValue);
+                methodScope.define("this", args.getFirst());
                 for (int i = 0; i < method.parameters().size(); i++) { // Note because args[0]=this, we map i/i+1
                     String param = method.parameters().get(i);
                     methodScope.define(param, args.get(i + 1));
@@ -332,7 +356,8 @@ public final class Evaluator implements Ast.Visitor<RuntimeValue, EvaluateExcept
     // Helper to convert a RuntimeValue to a String
     private String runtimeValueToString(RuntimeValue value) {
         if (value instanceof RuntimeValue.Primitive) {
-            return String.valueOf(((RuntimeValue.Primitive) value).value());
+            Object val = ((RuntimeValue.Primitive) value).value();
+            return val == null ? "NIL" : String.valueOf(val);
         }
         return "";
     }
@@ -363,7 +388,6 @@ public final class Evaluator implements Ast.Visitor<RuntimeValue, EvaluateExcept
                 default -> throw new EvaluateException("Unsupported numeric operator: " + op);
             };
         } catch (EvaluateException e) {
-            // Fall back to BigDecimal arithmetic.
             BigDecimal a = requireType(x, BigDecimal.class);
             BigDecimal b = requireType(y, BigDecimal.class);
             return switch (op) {
@@ -372,7 +396,8 @@ public final class Evaluator implements Ast.Visitor<RuntimeValue, EvaluateExcept
                 case "*" -> new RuntimeValue.Primitive(a.multiply(b));
                 case "/" -> {
                     if (b.compareTo(BigDecimal.ZERO) == 0) throw new EvaluateException("Division by zero");
-                    yield new RuntimeValue.Primitive(a.divide(b, 0, RoundingMode.HALF_EVEN)); // Scale needs to be 0
+                    int scale = Math.max(a.scale(), b.scale()); // LOOK: must set manual scale
+                    yield new RuntimeValue.Primitive(a.divide(b, scale, RoundingMode.HALF_EVEN)); // Half even
                 }
                 default -> throw new EvaluateException("Unsupported numeric operator: " + op);
             };
