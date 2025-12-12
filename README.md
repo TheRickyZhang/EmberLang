@@ -1,3 +1,3 @@
 # EmberLang
-This is a small-scale programming language I'm creating.
+This is a small-scale programming language extending from a course.
 It's pretty fire :3
